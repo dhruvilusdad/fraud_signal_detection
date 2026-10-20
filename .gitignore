@@ -1,0 +1,30 @@
+# Python environments and bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local transaction data is large and must not be redistributed by default
+creditcard.csv
+data/creditcard.csv
+
+# Local credentials and secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+credentials.json
+token.json
+*.pem
+*.key
+
+# Temporary and editor files
+.ipynb_checkpoints/
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+.vscode/
