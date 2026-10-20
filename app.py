@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import math
-import hashlib
 import os
-import shutil
-import tempfile
 import warnings
 from pathlib import Path
 from typing import Any
@@ -33,8 +30,7 @@ _configured_data_path = os.environ.get("FRAUD_DATA_PATH")
 DATA_PATH = Path(_configured_data_path).expanduser() if _configured_data_path else ROOT / "creditcard.csv"
 if not DATA_PATH.is_absolute():
     DATA_PATH = ROOT / DATA_PATH
-DATA_CANDIDATES = (DATA_PATH, ROOT / "creditcard.csv", ROOT / "data" / "creditcard.csv")
-MAX_DATASET_UPLOAD_BYTES = 200 * 1024 * 1024
+KAGGLE_DATASET_HANDLE = "mlg-ulb/creditcardfraud"
 MODEL_PATHS = {
     "Logistic Regression": ROOT / "logistic_regression_model.pkl",
     "Random Forest": ROOT / "random_forest_model.pkl",
@@ -338,34 +334,87 @@ def _asset_signature(path: Path) -> tuple[str, int, int]:
         return (str(path), -1, -1)
 
 
-def _resolve_data_path() -> Path:
-    """Resolve an explicitly configured dataset or either supported local layout."""
-    if _configured_data_path:
-        return DATA_PATH
-    for candidate in dict.fromkeys(DATA_CANDIDATES):
+class DatasetProvisionError(RuntimeError):
+    """Raised when the real transaction dataset cannot be located or downloaded."""
+
+
+@st.cache_resource(show_spinner="Checking local files and Kaggle dataset cache...")
+def _resolve_data_path(root_directory: str, configured_path: str = "") -> Path:
+    """Find a local CSV or download the real Kaggle dataset into KaggleHub's cache."""
+    root = Path(root_directory).resolve()
+    candidates: list[Path] = []
+    if configured_path.strip():
+        configured = Path(configured_path).expanduser()
+        candidates.append(configured if configured.is_absolute() else root / configured)
+    candidates.extend((root / "creditcard.csv", root / "data" / "creditcard.csv"))
+    for candidate in dict.fromkeys(candidates):
         if candidate.is_file():
-            return candidate
-    return DATA_PATH
+            return candidate.resolve()
 
-
-def _stage_uploaded_dataset(uploaded_file: Any) -> Path:
-    """Stage a user's real CSV outside the repository for this app process."""
-    file_size = int(getattr(uploaded_file, "size", 0))
-    if file_size > MAX_DATASET_UPLOAD_BYTES:
-        raise ValueError(
-            "The dataset exceeds the 200 MB upload limit. Configure FRAUD_DATA_PATH "
-            "to a readable mounted file instead."
+    username = os.environ.get("KAGGLE_USERNAME", "").strip()
+    api_key = os.environ.get("KAGGLE_KEY", "").strip()
+    try:
+        username = username or str(st.secrets.get("KAGGLE_USERNAME", "")).strip()
+        api_key = api_key or str(st.secrets.get("KAGGLE_KEY", "")).strip()
+    except Exception:
+        # Local runs without a Streamlit secrets file use environment variables.
+        pass
+    credentials_directory = Path(
+        os.environ.get("KAGGLE_CONFIG_DIR", str(Path.home() / ".kaggle"))
+    ).expanduser()
+    has_local_credentials_file = (credentials_directory / "kaggle.json").is_file()
+    if (not username or not api_key) and not has_local_credentials_file:
+        raise DatasetProvisionError(
+            "Kaggle credentials are not configured. Add both KAGGLE_USERNAME and "
+            "KAGGLE_KEY in Streamlit Cloud Secrets, or export both variables locally. "
+            "Locally, a Kaggle credentials file at ~/.kaggle/kaggle.json is also supported. "
+            "Then accept the credit-card dataset terms on Kaggle."
         )
-    uploaded_file.seek(0)
-    digest = hashlib.sha256(uploaded_file.getbuffer()).hexdigest()
-    upload_dir = Path(tempfile.gettempdir()) / "fraud_signal_datasets"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    staged_path = upload_dir / f"creditcard-{digest}.csv"
-    if not staged_path.is_file():
-        uploaded_file.seek(0)
-        with staged_path.open("wb") as destination:
-            shutil.copyfileobj(uploaded_file, destination)
-    return staged_path
+    if username and api_key:
+        os.environ["KAGGLE_USERNAME"] = username
+        os.environ["KAGGLE_KEY"] = api_key
+
+    try:
+        import kagglehub
+    except ImportError as error:
+        raise DatasetProvisionError(
+            "KaggleHub is not installed. Install the dependencies from requirements.txt."
+        ) from error
+
+    try:
+        downloaded = Path(kagglehub.dataset_download(KAGGLE_DATASET_HANDLE)).expanduser()
+    except Exception as error:
+        error_text = str(error).casefold()
+        if (
+            type(error).__name__ == "UnauthenticatedError"
+            or "401" in error_text
+            or "403" in error_text
+            or "unauthenticated" in error_text
+        ):
+            raise DatasetProvisionError(
+                "Kaggle rejected the configured credentials or dataset access. Verify "
+                "KAGGLE_USERNAME and KAGGLE_KEY in Streamlit Secrets, and accept the "
+                "dataset terms on Kaggle with that account."
+            ) from error
+        raise DatasetProvisionError(
+            "KaggleHub could not download the credit-card dataset. Check that the "
+            "deployment can reach Kaggle and the dataset handle remains available "
+            f"(error: {type(error).__name__})."
+        ) from error
+
+    if downloaded.is_file() and downloaded.name.casefold() == "creditcard.csv":
+        return downloaded.resolve()
+    if downloaded.is_dir():
+        matches = sorted(
+            (path for path in downloaded.rglob("*") if path.is_file() and path.name.casefold() == "creditcard.csv"),
+            key=lambda path: (len(path.parts), str(path).casefold()),
+        )
+        if matches:
+            return matches[0].resolve()
+    raise DatasetProvisionError(
+        "KaggleHub downloaded the dataset, but no creditcard.csv was found inside it. "
+        "Verify the dataset handle and that the published dataset contains the expected CSV."
+    )
 
 
 def _model_signature() -> tuple[tuple[str, str, int, int], ...]:
@@ -960,40 +1009,26 @@ def main() -> None:
         st.caption("Historical dataset · not a live bank feed")
         st.caption(f"Scikit-learn runtime: {sklearn.__version__}")
 
-    data_path = _resolve_data_path()
-    if not data_path.is_file():
+    try:
+        data_path = _resolve_data_path(str(ROOT), os.environ.get("FRAUD_DATA_PATH", ""))
+    except DatasetProvisionError as error:
         _hero(
             "Dataset setup",
-            "Add the transaction dataset",
-            "This deployment needs the original credit-card CSV before its analytics and model tools can load.",
+            "Automatic dataset download unavailable",
+            "The app could not locate the real local CSV or retrieve it from KaggleHub.",
         )
-        st.warning(
-            "The real creditcard.csv is not bundled with this deployment. "
-            "It is excluded from GitHub because it exceeds the per-file size limit."
+        st.error(str(error))
+        st.markdown(
+            "In Streamlit Cloud, open **App settings → Secrets** and add both Kaggle "
+            "credentials shown below. Also confirm you have accepted the dataset terms "
+            "on Kaggle. Locally, place `creditcard.csv` beside `app.py` or configure `FRAUD_DATA_PATH`."
         )
-        with st.container(border=True):
-            st.subheader("Provide the authorized dataset")
-            st.caption(
-                "Upload the original CSV. It must contain Time, V1–V28, Amount, and Class; "
-                "Class must include both 0 (genuine) and 1 (fraud). No synthetic data is created."
-            )
-            uploaded_dataset = st.file_uploader(
-                "Choose creditcard.csv",
-                type=["csv"],
-                key="creditcard_dataset_upload",
-                help="Upload the original creditcard.csv (maximum 200 MB).",
-            )
-        if uploaded_dataset is None:
-            st.info(
-                "Upload the CSV to continue. Locally, place it beside `app.py` or at "
-                "`data/creditcard.csv`; for mounted storage, set `FRAUD_DATA_PATH`."
-            )
-            st.stop()
-        try:
-            data_path = _stage_uploaded_dataset(uploaded_dataset)
-        except (OSError, ValueError) as error:
-            st.error(f"Unable to stage the uploaded dataset: {error}")
-            st.stop()
+        st.code(
+            'KAGGLE_USERNAME = "your_kaggle_username"\n'
+            'KAGGLE_KEY = "your_kaggle_api_key"',
+            language="toml",
+        )
+        st.stop()
 
     data_signature = _asset_signature(data_path)
     try:

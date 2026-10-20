@@ -18,7 +18,7 @@ A local, educational Streamlit dashboard for reviewing historical credit-card tr
 
 ## Technology
 
-Python, Streamlit, Pandas, NumPy, Scikit-learn, Plotly, and Joblib. Scikit-learn is pinned to 1.7.2 to match the saved model serialization version.
+Python, Streamlit, Pandas, NumPy, Scikit-learn, Plotly, Joblib, and KaggleHub. Scikit-learn is pinned to 1.7.2 to match the saved model serialization version.
 
 ## Project structure
 
@@ -39,9 +39,16 @@ The supplied project folder did not contain a Jupyter notebook. No notebook has 
 
 ## Dataset
 
-Place the credit-card transaction dataset at `creditcard.csv` beside `app.py`, or at `data/creditcard.csv`. `FRAUD_DATA_PATH` can point to another readable mounted copy. These paths are resolved with `pathlib`, so they work from both local runs and Streamlit Cloud's app directory. If no file is found, the sidebar offers an uploader for the real CSV.
+The app checks `FRAUD_DATA_PATH`, `creditcard.csv` beside `app.py`, and `data/creditcard.csv`, in that order. Paths are resolved with `pathlib`. If no local file exists, KaggleHub automatically downloads the real dataset `mlg-ulb/creditcardfraud` and locates its `creditcard.csv` in KaggleHub's returned cache directory. The downloaded path is cached as a Streamlit resource and the validated DataFrame is cached as Streamlit data, so normal reruns do not re-download or re-parse the dataset. KaggleHub also maintains its own disk cache for the running environment.
 
-The CSV is approximately 151 MB, exceeds GitHub's 100 MB per-file limit, and is ignored by Git. This is why it is absent from the deployed repository and caused the original “Dataset not found” error. Obtain the original dataset from a source you are authorized to use and check its license/terms. For Streamlit Cloud, upload `creditcard.csv` in the main app page when prompted; the app stages that file in the system temporary directory for the current running deployment. A restart/redeploy may require uploading it again. For persistent hosting, mount the authorized dataset through your hosting provider and set `FRAUD_DATA_PATH` to its path. No records are synthesized and no live banking feed is used.
+The CSV is approximately 151 MB, exceeds GitHub's 100 MB per-file limit, and is ignored by Git. It is therefore not committed. If neither local path is available, KaggleHub automatically downloads the real source dataset. In Streamlit Cloud, add these entries under **App settings → Secrets**:
+
+```toml
+KAGGLE_USERNAME = "your_kaggle_username"
+KAGGLE_KEY = "your_kaggle_api_key"
+```
+
+Create the API key in your Kaggle account settings, keep it only in Streamlit Secrets (never in source control), and accept the dataset's Kaggle terms with that account. KaggleHub's download cache is reused during the app process and across normal reruns. For local runs, configure the same two values as environment variables or use Kaggle's supported local credentials file. If credentials, Kaggle access, or the dataset file are unavailable, the app gives a user-friendly setup error. No records are synthesized, modified, or used to retrain the models, and no live banking feed is used.
 
 The inspected dataset contains 284,807 rows and 31 columns: `Time`, `V1` through `V28`, `Amount`, and `Class`. `Class=0` is genuine; `Class=1` is fraud. It contains 492 fraud records (about 0.173%) and 1,081 duplicate rows. The app preserves all supplied rows for historical statistics and reproduces the saved models' inferred training split for evaluation.
 

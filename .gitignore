@@ -17,6 +17,8 @@ data/creditcard.csv
 .streamlit/secrets.toml
 credentials.json
 token.json
+kaggle.json
+.kaggle/
 *.pem
 *.key
 
