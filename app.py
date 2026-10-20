@@ -340,6 +340,8 @@ def _asset_signature(path: Path) -> tuple[str, int, int]:
 
 def _resolve_data_path() -> Path:
     """Resolve an explicitly configured dataset or either supported local layout."""
+    if _configured_data_path:
+        return DATA_PATH
     for candidate in dict.fromkeys(DATA_CANDIDATES):
         if candidate.is_file():
             return candidate
@@ -960,26 +962,31 @@ def main() -> None:
 
     data_path = _resolve_data_path()
     if not data_path.is_file():
-        st.sidebar.markdown("### Transaction dataset")
-        st.sidebar.caption(
-            "The 150 MB credit-card CSV is excluded from GitHub and is not bundled with the app."
+        _hero(
+            "Dataset setup",
+            "Add the transaction dataset",
+            "This deployment needs the original credit-card CSV before its analytics and model tools can load.",
         )
-        uploaded_dataset = st.sidebar.file_uploader(
-            "Upload creditcard.csv",
-            type=["csv"],
-            key="creditcard_dataset_upload",
-            help="Upload the original, authorized dataset. No sample or synthetic data is used.",
+        st.warning(
+            "The real creditcard.csv is not bundled with this deployment. "
+            "It is excluded from GitHub because it exceeds the per-file size limit."
         )
-        if uploaded_dataset is None:
-            st.error(
-                "The transaction dataset is not available in this deployment. "
-                "Upload the real creditcard.csv in the sidebar, or configure FRAUD_DATA_PATH "
-                "to a readable mounted copy."
+        with st.container(border=True):
+            st.subheader("Provide the authorized dataset")
+            st.caption(
+                "Upload the original CSV. It must contain Time, V1–V28, Amount, and Class; "
+                "Class must include both 0 (genuine) and 1 (fraud). No synthetic data is created."
             )
+            uploaded_dataset = st.file_uploader(
+                "Choose creditcard.csv",
+                type=["csv"],
+                key="creditcard_dataset_upload",
+                help="Upload the original creditcard.csv (maximum 200 MB).",
+            )
+        if uploaded_dataset is None:
             st.info(
-                "For a local run, put the file at `creditcard.csv` beside `app.py` "
-                "or at `data/creditcard.csv`. The CSV is intentionally not committed "
-                "because it exceeds GitHub's 100 MB per-file limit."
+                "Upload the CSV to continue. Locally, place it beside `app.py` or at "
+                "`data/creditcard.csv`; for mounted storage, set `FRAUD_DATA_PATH`."
             )
             st.stop()
         try:
