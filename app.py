@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import os
+import shutil
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Any
@@ -25,7 +29,12 @@ from sklearn.model_selection import train_test_split
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_PATH = ROOT / "creditcard.csv"
+_configured_data_path = os.environ.get("FRAUD_DATA_PATH")
+DATA_PATH = Path(_configured_data_path).expanduser() if _configured_data_path else ROOT / "creditcard.csv"
+if not DATA_PATH.is_absolute():
+    DATA_PATH = ROOT / DATA_PATH
+DATA_CANDIDATES = (DATA_PATH, ROOT / "creditcard.csv", ROOT / "data" / "creditcard.csv")
+MAX_DATASET_UPLOAD_BYTES = 200 * 1024 * 1024
 MODEL_PATHS = {
     "Logistic Regression": ROOT / "logistic_regression_model.pkl",
     "Random Forest": ROOT / "random_forest_model.pkl",
@@ -327,6 +336,34 @@ def _asset_signature(path: Path) -> tuple[str, int, int]:
         return (str(path), stat.st_mtime_ns, stat.st_size)
     except OSError:
         return (str(path), -1, -1)
+
+
+def _resolve_data_path() -> Path:
+    """Resolve an explicitly configured dataset or either supported local layout."""
+    for candidate in dict.fromkeys(DATA_CANDIDATES):
+        if candidate.is_file():
+            return candidate
+    return DATA_PATH
+
+
+def _stage_uploaded_dataset(uploaded_file: Any) -> Path:
+    """Stage a user's real CSV outside the repository for this app process."""
+    file_size = int(getattr(uploaded_file, "size", 0))
+    if file_size > MAX_DATASET_UPLOAD_BYTES:
+        raise ValueError(
+            "The dataset exceeds the 200 MB upload limit. Configure FRAUD_DATA_PATH "
+            "to a readable mounted file instead."
+        )
+    uploaded_file.seek(0)
+    digest = hashlib.sha256(uploaded_file.getbuffer()).hexdigest()
+    upload_dir = Path(tempfile.gettempdir()) / "fraud_signal_datasets"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = upload_dir / f"creditcard-{digest}.csv"
+    if not staged_path.is_file():
+        uploaded_file.seek(0)
+        with staged_path.open("wb") as destination:
+            shutil.copyfileobj(uploaded_file, destination)
+    return staged_path
 
 
 def _model_signature() -> tuple[tuple[str, str, int, int], ...]:
@@ -921,7 +958,37 @@ def main() -> None:
         st.caption("Historical dataset · not a live bank feed")
         st.caption(f"Scikit-learn runtime: {sklearn.__version__}")
 
-    data_signature = _asset_signature(DATA_PATH)
+    data_path = _resolve_data_path()
+    if not data_path.is_file():
+        st.sidebar.markdown("### Transaction dataset")
+        st.sidebar.caption(
+            "The 150 MB credit-card CSV is excluded from GitHub and is not bundled with the app."
+        )
+        uploaded_dataset = st.sidebar.file_uploader(
+            "Upload creditcard.csv",
+            type=["csv"],
+            key="creditcard_dataset_upload",
+            help="Upload the original, authorized dataset. No sample or synthetic data is used.",
+        )
+        if uploaded_dataset is None:
+            st.error(
+                "The transaction dataset is not available in this deployment. "
+                "Upload the real creditcard.csv in the sidebar, or configure FRAUD_DATA_PATH "
+                "to a readable mounted copy."
+            )
+            st.info(
+                "For a local run, put the file at `creditcard.csv` beside `app.py` "
+                "or at `data/creditcard.csv`. The CSV is intentionally not committed "
+                "because it exceeds GitHub's 100 MB per-file limit."
+            )
+            st.stop()
+        try:
+            data_path = _stage_uploaded_dataset(uploaded_dataset)
+        except (OSError, ValueError) as error:
+            st.error(f"Unable to stage the uploaded dataset: {error}")
+            st.stop()
+
+    data_signature = _asset_signature(data_path)
     try:
         frame = load_transactions(*data_signature)
     except (FileNotFoundError, ValueError, OSError) as error:

@@ -39,9 +39,11 @@ The supplied project folder did not contain a Jupyter notebook. No notebook has 
 
 ## Dataset
 
-Place the credit-card transaction dataset at `creditcard.csv` in this project directory. The local inspected file contains 284,807 rows and 31 columns: `Time`, `V1` through `V28`, `Amount`, and `Class`. `Class=0` is genuine; `Class=1` is fraud. The file contains 492 fraud records (about 0.173%) and 1,081 duplicate rows. The app preserves all supplied rows for historical statistics and reproduces the saved models' inferred training split for evaluation.
+Place the credit-card transaction dataset at `creditcard.csv` beside `app.py`, or at `data/creditcard.csv`. `FRAUD_DATA_PATH` can point to another readable mounted copy. These paths are resolved with `pathlib`, so they work from both local runs and Streamlit Cloud's app directory. If no file is found, the sidebar offers an uploader for the real CSV.
 
-The CSV is approximately 151 MB and is ignored by Git. Obtain it from the dataset source you are authorized to use, check its license/terms, and place it locally at `creditcard.csv`. No records are synthesized and no live banking feed is used.
+The CSV is approximately 151 MB, exceeds GitHub's 100 MB per-file limit, and is ignored by Git. This is why it is absent from the deployed repository and caused the original “Dataset not found” error. Obtain the original dataset from a source you are authorized to use and check its license/terms. For Streamlit Cloud, upload `creditcard.csv` in the sidebar when prompted; the app stages that file in the system temporary directory for the current running deployment. A restart/redeploy may require uploading it again. For persistent hosting, mount the authorized dataset through your hosting provider and set `FRAUD_DATA_PATH` to its path. No records are synthesized and no live banking feed is used.
+
+The inspected dataset contains 284,807 rows and 31 columns: `Time`, `V1` through `V28`, `Amount`, and `Class`. `Class=0` is genuine; `Class=1` is fraud. It contains 492 fraud records (about 0.173%) and 1,081 duplicate rows. The app preserves all supplied rows for historical statistics and reproduces the saved models' inferred training split for evaluation.
 
 ## Models and feature order
 
